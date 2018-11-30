@@ -76,7 +76,8 @@ if __name__ == '__main__':
     parser.add_argument('--beta2', type=float, default=0.99)
 
     # Getting Adversary Examples Configuration
-    parser.add_argument('--gan_path', type=str, default=None, help='Path for loading pretrained GAN')
+    parser.add_argument('--ckpt_path', type=str, default=None, help='Path for loading pretrained checkpoint')
+    parser.add_argument('--cls_arc', type=str, default='vggnet', help='Kind of classifier to deceive')
     parser.add_argument('--cls_path', type=str, default=None, help='Path for loading pretrained Classifier')
     parser.add_argument('--delta_r', type=float, default=0.01, help='Increment of search range')
     parser.add_argument('--search', type=str, default='iterative', choice=['iterative', 'recursive'])

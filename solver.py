@@ -202,15 +202,20 @@ class Solver():
                           d_loss=self.val_d_loss,
                           g_loss=self.val_g_loss,
                           i_loss=self.val_i_loss))
+            
             # If Average loss is lower than previous epoch, Save Model
             if (val_d_loss.avg + val_g_loss.avg + val_i_loss.avg) < self.eval_loss:
-                print('===> Set of Model is saving at epoch %d!!!' % (self.epoch))
+                print('===> Set of Models is saving at epoch %d!!!' % (self.epoch))
                 self.eval_loss = (val_d_loss.avg + val_g_loss.avg + val_i_loss.avg)
                 ckpt = {
-
-                }
-                # TODO: SAVE MODEL PART
-                pass
+                    'epoch':self.epoch,
+                    'D_state_dict':self.D.state_dict(),
+                    'G_state_dict':self.G.state_dict(),
+                    'I_state_dict':self.Inverter.state_dict(),
+                    'd_optim_state_dict':self.d_optim.state_dict(),
+                    'g_optim_state_dict':self.g_optim.state_dict(),
+                    'i_optim_state_dict':self.i_optim.state_dict()}
+                torch.save(ckpt, os.path.join(self.args.model_save_path, 'ckpt_%d' % (self.epoch)))
 
 
     def calc_grad_pn(self, out, x):
@@ -233,8 +238,159 @@ class Solver():
         self.i_optim.zero_grad()
 
 
-class Tester():
-    pass
+class AdversaryGen():
+    def __init__(self, args, train_loader=None):
+        self.args = args
+        self.train_loader = train_loader
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Build & Load pretrained models: GAN, Classifier
+        self.load_pre_model()
+
+        # 
+        
+    def load_pre_model(self):
+        self.G = WganG(z_dim=self.args.z_dim).to(self.device)
+        self.Inverter = Inverter().to(self.device)
+        ckpt = torch.load(self.args.ckpt_path)
+        self.G.load_state_dict(ckpt['G_state_dict'])
+        self.Inverter.load_state_dict(ckpt['I_state_dict'])
+        print('Models[Pretrained epoch: %d] are loaded!!' % (ckpt['epoch']))
+    
+    def to_np(self, x):
+        return x.data.cpu().numpy()
+    
+    def generate_adversary(self):
+        
+        # TODO : Build YAML logger for experiments
+        print('Search/Classifier-[{}/{}]'.format(
+            self.args.search, self.args.cls_arc))
+        
+        if self.cls_arc == 'lenet':
+            C = LeNet().to(self.device)
+            cla_path = os.path.join(self.cla_dir, self.classifier, '{}_lenet.ckpt'.format(self.cla_iters))
+            C.load_state_dict(torch.load(cla_path, map_location=lambda storage, loc: storage))
+
+        # Generate adversary examples.
+        for j, (images, labels) in enumerate(self.test_loader):
+            for i in range(32):
+                x = images[i].unsqueeze(0).to(self.device)
+                y = labels[i].to(self.device)
+
+                adversary = self.iterative_search(self.G, self.I, C, x, y,
+                                                  n_samples=self.n_samples, step=self.step)
+                adversary_path = os.path.join(self.adversary_dir,
+                                 '{}_{}_{}.jpg'.format(self.classifier, j+1, i+1))
+                self.save_adversary(adversary, adversary_path)
+                print('Saved natural adversary example...'.format(adversary_path))
+
+    def save_adversary(self, adversary, filename):
+        fig, ax = plt.subplots(1, 2, figsize=(7, 3))
+
+        ax[0].imshow(adversary['x'],
+                     interpolation='none', cmap=plt.get_cmap('gray'))
+        ax[0].text(1, 5, str(adversary['y']), color='white', fontsize=20)
+        ax[0].axis('off')
+
+        ax[1].imshow(adversary['x_adv'],
+                     interpolation='none', cmap=plt.get_cmap('gray'))
+        ax[1].text(1, 5, str(adversary['y_adv']), color='white', fontsize=20)
+        ax[1].axis('off')
+
+        fig.savefig(filename)
+        plt.close()
+
+
+    # Codes from https://github.com/zhengliz/natural-adversary/blob/master/image/search.py
+    def iterative_search(self, x, y, y_target=None, z=None,
+                         lower=0., upper=10., p=2):
+        """
+        Related Objects
+        :param x: SINGLE input instance
+        :param y: SINGLE label
+        :param y_target: target label for adversary
+        :param z: latent vector corresponding to x
+        :param l: lower bound of search range
+        :param h: upper bound of search range
+        :param p: indicating norm order
+        :return: adversary for x against the classifier (d_adv is delta z between z and z_adv)
+        """
+        # Init
+        G = self.G
+        I = self.Inverter
+        C = self.C
+        n_samples = self.args.n_samples
+        delta_r = self.args.delta_r
+        curr_l = lower
+        curr_h = upper + delta_r
+        x_adv, y_adv, z_adv, d_adv = None, None, None, None
+
+        if z is None:
+            z = I(x)
+
+        while True:
+            delta_z = np.random.randn(n_samples, z.size(1))
+            d = np.random.rand(n_samples) * (curr_h - curr_l) + curr_l # random values between the search range (r, r + delta r]
+            delta_z_norm = np.linalg.norm(delta_z, ord=p, axis=1)      # Lp norm of delta z along axis=1
+            d_norm = np.divide(d, delta_z_norm).reshape(-1, 1)         # rescale/normalize d
+            delta_z = np.multiply(delta_z, d_norm)                     # norm (r, r + delta r] x norm (1) => norm (r, r + delta r]
+            delta_z = torch.from_numpy(delta_z).float().to(self.device)
+            z_tilde = z + delta_z
+            x_tilde = G(z_tilde)
+            y_tilde = torch.argmax(C(x_tilde), dim=1)
+
+            if y_target is None:
+                indices_adv = np.where(y_tilde != y)[0]
+            else:
+                indices_adv = np.where(y_tilde == y_target)[0]
+
+            # No candidate generated.
+            if len(indices_adv) == 0:
+                print('No candidate generated within [{},{}]'.format(curr_l,curr_h))
+                curr_l = curr_h
+                curr_h = curr_l + delta_r
+
+            # Certain candidates generated.
+            else:
+                # Choose the data index with the least perturbation.
+                idx_adv = indices_adv[np.argmin(d[indices_adv])]
+
+                if y_target is None:
+                    assert (y_tilde[idx_adv] != y)
+
+                else:
+                    assert (y_tilde[idx_adv] == y_target)
+
+                # Save natural adversary example.
+                if d_adv is None or d[idx_adv] < d_adv:
+                    x_adv = x_tilde[idx_adv]
+                    y_adv = y_tilde[idx_adv]
+                    z_adv = z_tilde[idx_adv]
+                    d_adv = d[idx_adv]
+
+                    if y_target is None:
+                        print("Untarget y=%d y_adv=%d d_adv=%.4f l=%.4f h=%.4f" % (y, y_adv, d_adv, l, h))
+                    else:
+                        print("Targeted y=%d y_adv=%d d_adv=%.4f l=%.4f h=%.4f" % (y, y_adv, d_adv, l, h))
+
+                    break
+
+        # Output : Adversary examples
+        adversary = {'x': self.to_np(x.squeeze()),
+                     'y': self.to_np(y),
+                     'z': self.to_np(z.squeeze()),
+                     'x_adv': self.to_np(x_adv.squeeze()),
+                     'y_adv': self.to_np(y_adv),
+                     'z_adv': self.to_np(z_adv),
+                     'd_adv': d_adv}
+
+        # POINT : COMPUTATION COST CAN BE DECREASED IF WE USE THE INFORMATION OF IMAGE
+        # Output : Perturbation magnitude, n_sample 
+        cost = {'ptb':np.linalg.norm(d_adv, norm=2),
+                'n_samples':n_samples}
+
+
+        return adversary, cost
 
 
 
