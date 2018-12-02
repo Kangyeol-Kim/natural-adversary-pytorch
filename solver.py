@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from model import WganG, WganD, Inverter
+from model import WganG, WganD, Inverter, BottleNeck
+from logger import Logger
 
 import time
 import datetime
@@ -18,6 +19,10 @@ class Solver():
         self.val_loader = val_loader
         self.build_model()
 
+        # Create Logger
+        if self.args.use_tb:
+            self.logger = Logger('./logs')
+
         # Train Start ==>
         self.train()
 
@@ -27,13 +32,13 @@ class Solver():
         self.Inverter = Inverter().to(self.device)
         self.g_optim = optim.Adam(self.G.parameters(),
                                   lr=self.args.g_lr,
-                                  self.betas=(self.args.beta1, self.args.beta2))
+                                  betas=(self.args.beta1, self.args.beta2))
         self.d_optim = optim.Adam(self.D.parameters(),
                                   lr=self.args.d_lr,
-                                  self.betas=(self.args.beta1, self.args.beta2))
+                                  betas=(self.args.beta1, self.args.beta2))
         self.i_optim = optim.Adam(self.Inverter.parameters(),
                                   lr=self.args.i_lr,
-                                  self.betas=(self.args.beta1, self.args.beta2))
+                                  betas=(self.args.beta1, self.args.beta2))
         self.MSELoss = nn.MSELoss()
         if self.args.n_gpus > 1:
             print('===> Use multiple gpus : %d' % (self.args.n_gpus))
@@ -59,12 +64,12 @@ class Solver():
         self.epoch = 0 # NOTE: Temporary fixed
         self.eval_loss = sys.maxsize # NOTE: Temporary fixed
 
+        start_time = time.time()
         # Training Phase
-        for iter in range(self.args.n_iters):
+        for i in range(self.args.n_iters):
             self.G.train()
             self.D.train()
             self.Inverter.train()
-            start_time = time.time()
             
             try:
                 real_images, _ = next(train_iter)
@@ -73,7 +78,8 @@ class Solver():
                 real_images, _ = next(train_iter)
             
             real_images = real_images.to(self.device)
-            noise = torch.randn(self.args.batch_size, self.z_dim).to(self.device)
+            noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
+            # noise = real image의 svd vector
 
             # =============== Train D =============== #
             # Compute Critic Loss.
@@ -82,14 +88,14 @@ class Solver():
             d_fake_loss = self.D(fake_images)
 
             # Comput Gradient Penalty
-            eps = torch.rand(real.images.size(0), 1, 1, 1).to(self.device)
+            eps = torch.rand(real_images.size(0), 1, 1, 1).to(self.device)
             xhat = eps*real_images + (1.-eps)*fake_images
             d_gp_loss = self.calc_grad_pn(out=self.D(xhat), x=xhat)
 
             # Discriminator Backprop.
             d_loss = torch.mean(d_fake_loss) - torch.mean(d_real_loss) + self.args.gp_weight * d_gp_loss
             self.reset_grad()
-            d_loss.backward()
+            d_loss.backward(retain_graph=True) # to backpropagate through D several times
             self.d_optim.step()
 
             # =============== Train G =============== #
@@ -105,7 +111,8 @@ class Solver():
 
             # Compute losses of each one.
             recon_loss = self.MSELoss(real_images, recon_images)
-            div_loss = self.MSELoss(noise, recon_noie)
+            div_loss = self.MSELoss(noise, recon_noise)
+            # TODO FIXED
 
             # Inverter Backpropagation
             i_loss = recon_loss + div_loss
@@ -119,19 +126,31 @@ class Solver():
             self.train_g_loss.update(g_loss.item())
             self.train_i_loss.update(i_loss.item())
 
+            # Print Logging
             if (i + 1) % self.args.log_step == 0:
                 elapsed = time.time() - start_time
                 elapsed = str(datetime.timedelta(seconds=elapsed))
                 print('Iteration [{0}/{1}]\t'
                       'Elapsed : {2}\t'
-                      'D_loss : {d_loss.val:.4f}({d_loss.avg:.4f})\t',
-                      'G_loss : {g_loss.val:.4f}({g_loss.avg:.4f})\t',
+                      'D_loss : {d_loss.val:.4f}({d_loss.avg:.4f})\t'
+                      'G_loss : {g_loss.val:.4f}({g_loss.avg:.4f})\t'
                       'I_loss : {i_loss.val:.4f}({i_loss.avg:.4f})'.format(
                           i + 1, self.args.n_iters, elapsed,
                           d_loss=self.train_d_loss,
                           g_loss=self.train_g_loss,
                           i_loss=self.train_i_loss))
-            
+
+            # Use tensorboard option 
+            if self.args.use_tb:
+                info = { 'train_d_loss': d_loss.item(), 
+                         'train_g_loss': g_loss.item(),
+                         'train_i_recon_loss': recon_loss.item(),
+                         'train_i_div_loss': div_loss.item()}
+
+                for tag, value in info.items():
+                    self.logger.scalar_summary(tag, value, step+1)
+
+            # Validation start ==> 
             if (i + 1) % iter_per_epoch:
                 self.epoch += 1
                 self.validate()
@@ -195,14 +214,22 @@ class Solver():
                 elapsed = str(datetime.timedelta(seconds=elapsed))
                 print('##### Validation {0}'
                       'Elapsed : {1}\t'
-                      'D_loss : {d_loss.val:.4f}({d_loss.avg:.4f})\t',
-                      'G_loss : {g_loss.val:.4f}({g_loss.avg:.4f})\t',
+                      'D_loss : {d_loss.val:.4f}({d_loss.avg:.4f})\t'
+                      'G_loss : {g_loss.val:.4f}({g_loss.avg:.4f})\t'
                       'I_loss : {i_loss.val:.4f}({i_loss.avg:.4f})'.format(
                           self.epoch, elapsed,
                           d_loss=self.val_d_loss,
                           g_loss=self.val_g_loss,
                           i_loss=self.val_i_loss))
             
+            # Use tensorboard
+            if self.args.use_tb:
+                info = { 'val_d_loss': d_loss.item(), 
+                         'val_g_loss': g_loss.item(),
+                         'val_i_recon_loss': recon_loss.item(),
+                         'val_i_div_loss': div_loss.item()}
+
+
             # If Average loss is lower than previous epoch, Save Model
             if (val_d_loss.avg + val_g_loss.avg + val_i_loss.avg) < self.eval_loss:
                 print('===> Set of Models is saving at epoch %d!!!' % (self.epoch))
@@ -255,34 +282,33 @@ class AdversaryGen():
         ckpt = torch.load(self.args.ckpt_path)
         self.G.load_state_dict(ckpt['G_state_dict'])
         self.Inverter.load_state_dict(ckpt['I_state_dict'])
-        print('Models[Pretrained epoch: %d] are loaded!!' % (ckpt['epoch']))
-    
+        if self.args.cls_arc == 'lenet':
+            self.C = LeNet().to(self.device)
+            cls_path = os.path.join(self.args.cls_path)
+            self.C.load_state_dict(torch.load(cls_path, map_location=lambda storage, loc: storage))
+
+        print('(G, I) Models[Pretrained epoch: %d] are loaded!!\n' 
+              '(C) model %s is loaded!!\n'
+              'Search algorithm : %s' % (ckpt['epoch'], self.args.cls_arc, self.args.search))
+
+
     def to_np(self, x):
         return x.data.cpu().numpy()
     
     def generate_adversary(self):
         
-        # TODO : Build YAML logger for experiments
-        print('Search/Classifier-[{}/{}]'.format(
-            self.args.search, self.args.cls_arc))
-        
-        if self.cls_arc == 'lenet':
-            C = LeNet().to(self.device)
-            cla_path = os.path.join(self.cla_dir, self.classifier, '{}_lenet.ckpt'.format(self.cla_iters))
-            C.load_state_dict(torch.load(cla_path, map_location=lambda storage, loc: storage))
-
         # Generate adversary examples.
         for j, (images, labels) in enumerate(self.test_loader):
             for i in range(32):
                 x = images[i].unsqueeze(0).to(self.device)
                 y = labels[i].to(self.device)
 
-                adversary = self.iterative_search(self.G, self.I, C, x, y,
+                adversary, _ = self.iterative_search(self.G, self.I, self.C, x, y,
                                                   n_samples=self.n_samples, step=self.step)
-                adversary_path = os.path.join(self.adversary_dir,
-                                 '{}_{}_{}.jpg'.format(self.classifier, j+1, i+1))
-                self.save_adversary(adversary, adversary_path)
-                print('Saved natural adversary example...'.format(adversary_path))
+                sample_save_path = os.path.join(self.args.sample_save_path,
+                                 '{}_{}_{}.jpg'.format(self.args.cls_arc, j+1, i+1))
+                self.save_adversary(adversary, sample_save_path)
+                print('Saved natural adversary example...'.format(sample_save_path))
 
     def save_adversary(self, adversary, filename):
         fig, ax = plt.subplots(1, 2, figsize=(7, 3))
@@ -388,7 +414,6 @@ class AdversaryGen():
         # Output : Perturbation magnitude, n_sample 
         cost = {'ptb':np.linalg.norm(d_adv, norm=2),
                 'n_samples':n_samples}
-
 
         return adversary, cost
 

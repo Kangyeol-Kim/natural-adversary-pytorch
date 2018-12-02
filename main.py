@@ -4,7 +4,7 @@ import argparse
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from solver import Solver, Tester
+from solver import Solver #, Tester
 
 
 def main(args):
@@ -12,8 +12,8 @@ def main(args):
     # Make directories
     if not os.path.exists(args.model_save_path):
         os.mkdir(args.model_save_path)
-    if not os.path.exists(args.out_path):
-        os.mkdir(args.out_path)
+    if not os.path.exists(args.sample_save_path):
+        os.mkdir(args.sample_save_path)
     
     # Get DataLoader
     if args.data == 'mnist':
@@ -39,15 +39,11 @@ def main(args):
 
     # Training or Test
     if args.mode == 'train':
-        solver = Solver()
+        solver = Solver(args=args, train_loader=train_loader, val_loader=val_loader)
         solver.train()
-    elif args.mode == 'test:
+    elif args.mode == 'test':
         tester = Tester()
         tester.test()
-
-    
-
-        
 
 
 
@@ -77,20 +73,21 @@ if __name__ == '__main__':
 
     # Getting Adversary Examples Configuration
     parser.add_argument('--ckpt_path', type=str, default=None, help='Path for loading pretrained checkpoint')
-    parser.add_argument('--cls_arc', type=str, default='vggnet', help='Kind of classifier to deceive')
+    parser.add_argument('--cls_arc', type=str, default='lenet', choices=['lenet','vggnet'], help='Kind of classifier to deceive')
     parser.add_argument('--cls_path', type=str, default=None, help='Path for loading pretrained Classifier')
     parser.add_argument('--delta_r', type=float, default=0.01, help='Increment of search range')
-    parser.add_argument('--search', type=str, default='iterative', choice=['iterative', 'recursive'])
+    parser.add_argument('--search', type=str, default='iterative', choices=['iterative', 'recursive'])
     parser.add_argument('--n_samples', type=int, default=5000, help='Numner of samples in each search iteration')
     
 
     # Paths for saving results
-    parser.add_argument('--model_save_path', type=str, default=None)
-    parser.add_argument('--out_path', type=str, default=None, help='Path for saving adversary')
+    parser.add_argument('--model_save_path', type=str, default='./model')
+    parser.add_argument('--sample_save_path', type=str, default='./sample', help='Path for saving adversary')
 
     # Log Configurations
     parser.add_argument('--log_step', type=int, default=10)
     parser.add_argument('--save_step', type=int, default=2)
+    parser.add_argument('--use_tb', type=str2bool, default=True)
 
     # Misc
     parser.add_argument('--n_gpus', type=int, default=1)
