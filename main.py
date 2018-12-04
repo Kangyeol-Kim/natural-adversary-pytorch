@@ -4,7 +4,7 @@ import argparse
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from solver import Solver #, Tester
+from solver import Solver, AdversaryGen
 
 
 def main(args):
@@ -17,9 +17,7 @@ def main(args):
     
     # Get DataLoader
     if args.data == 'mnist':
-        transform = transforms.Compose([
-                            transforms.ToTensor(),
-                            transforms.Normalize((0.1307,), (0.3081,))])
+        transform = transforms.Compose([transforms.ToTensor()])
         
         train_loader = DataLoader(datasets.MNIST('./data', 
                                   train=True, 
@@ -38,12 +36,16 @@ def main(args):
         pass
 
     # Training or Test
-    if args.mode == 'train':
+    if args.mode in ['ori_train', 'svd_train']:
+        # One time --
         solver = Solver(args=args, train_loader=train_loader, val_loader=val_loader)
         solver.train()
-    elif args.mode == 'test':
-        tester = Tester()
-        tester.test()
+        # adv_gen = AdversaryGen(args=args, val_loader=val_loader)
+        # adv_gen.generate_adversary()
+    elif args.mode in ['ori_test', 'svd_test']:
+        adv_gen = AdversaryGen(args=args, val_loader=val_loader)
+        adv_gen.generate_adversary()
+
 
 
 
@@ -54,12 +56,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Task Specification
-    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
+    parser.add_argument('--mode', type=str, default='ori_train', 
+                                            choices=['ori_train', 'ori_test', 'svd_train', 'svd_test'])
     parser.add_argument('--data', type=str, default='mnist', choices=['mnist', 'lsun'])
+    parser.add_argument
 
     # Model Cofiguration
-    parser.add_argument('--z_dim', type=int, default=64)
+    parser.add_argument('--z_dim', type=int, default=100)
     parser.add_argument('--image_size', type=int, default=28)
+    parser.add_argument('--t_v', type=int, default=3, help='Truncated SVD value')
 
     # Hyper-parameters
     parser.add_argument('--gp_weight', type=float, default=10.0, help='Gradient penalty weight for training WGAN')

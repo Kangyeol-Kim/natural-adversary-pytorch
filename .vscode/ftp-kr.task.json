@@ -1,0 +1,16 @@
+{
+ "/data/mnist/processed/training.pt": "upload",
+ "/data/mnist/processed": "upload",
+ "/data/mnist/raw/t10k-images-idx3-ubyte": "upload",
+ "/data/mnist/raw/t10k-labels-idx1-ubyte": "upload",
+ "/data/mnist/raw/train-images-idx3-ubyte": "upload",
+ "/data/mnist/raw/train-labels-idx1-ubyte": "upload",
+ "/data/mnist": "upload",
+ "/data/processed/test.pt": "upload",
+ "/data/processed/training.pt": "upload",
+ "/data/raw/t10k-images-idx3-ubyte": "upload",
+ "/data/raw/t10k-labels-idx1-ubyte": "upload",
+ "/data/raw/train-images-idx3-ubyte": "upload",
+ "/data/raw/train-labels-idx1-ubyte": "upload",
+ "/classifier.py": "upload"
+}

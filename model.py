@@ -69,7 +69,7 @@ class Inverter(nn.Module):
     def __init__(self, ngf=64, z_dim=64):
         super(Inverter, self).__init__()
         self.ngf = ngf
-        self.z_dim = 64
+        self.z_dim = z_dim
 
         self.conv = nn.Sequential(
             nn.Conv2d(1, self.ngf, kernel_size=3, stride=2, padding=1),

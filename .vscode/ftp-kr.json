@@ -1,0 +1,17 @@
+{
+    "host": "163.152.20.239",
+    "username": "kangyeol",
+    "password": "kky1994",
+    "remotePath": "/home/kangyeol/natural_adv_gen",
+    "protocol": "sftp",
+    "port": 22,
+    "fileNameEncoding": "utf8",
+    "autoUpload": true,
+    "autoDelete": false,
+    "autoDownload": false,
+    "ignore": [
+        "/.vscode/*",
+        ".git",
+        "/.vscode"
+    ]
+}

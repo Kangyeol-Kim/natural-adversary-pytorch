@@ -1,0 +1,154 @@
+{
+  "sftp://163.152.20.239:22@kangyeol": {
+    "home": {
+      "kangyeol": {
+        ".torch": {},
+        "gland_segmentation": {},
+        ".bash_history": {
+          "type": "-",
+          "size": 35235,
+          "lmtime": 0,
+          "modified": false
+        },
+        "patch_1280": {},
+        ".viminfo": {
+          "type": "-",
+          "size": 9665,
+          "lmtime": 0,
+          "modified": false
+        },
+        "patch_256": {},
+        ".bashrc-anaconda3.bak": {
+          "type": "-",
+          "size": 3771,
+          "lmtime": 0,
+          "modified": false
+        },
+        ".profile": {
+          "type": "-",
+          "size": 655,
+          "lmtime": 0,
+          "modified": false
+        },
+        ".cache": {},
+        "patch_768": {},
+        "test.py": {
+          "type": "-",
+          "size": 42,
+          "lmtime": 0,
+          "modified": false
+        },
+        "pytorch": {},
+        ".continuum": {},
+        ".ssh": {},
+        "TerminalImageViewer": {},
+        ".conda": {},
+        "expr": {},
+        ".nv": {},
+        ".bashrc": {
+          "type": "-",
+          "size": 3934,
+          "lmtime": 0,
+          "modified": false
+        },
+        "examples.desktop": {
+          "type": "-",
+          "size": 8980,
+          "lmtime": 0,
+          "modified": false
+        },
+        ".python_history": {
+          "type": "-",
+          "size": 147,
+          "lmtime": 0,
+          "modified": false
+        },
+        "anaconda3": {},
+        "3_Segmentation": {},
+        ".bash_logout": {
+          "type": "-",
+          "size": 220,
+          "lmtime": 0,
+          "modified": false
+        },
+        "5_Merged_classification": {},
+        "medical_new": {},
+        "classifier.py": {
+          "type": "-",
+          "size": 4818,
+          "lmtime": 1543853155312,
+          "modified": false
+        },
+        "natural_adv_gen": {
+          "sample": {},
+          "README.md": {
+            "type": "-",
+            "size": 773,
+            "lmtime": 1540905971694,
+            "modified": false
+          },
+          "main.py": {
+            "type": "-",
+            "size": 4184,
+            "lmtime": 1543854145409,
+            "modified": false
+          },
+          "classifier.py": {
+            "type": "-",
+            "size": 4818,
+            "lmtime": 1543853641215,
+            "modified": false
+          },
+          "model.py": {
+            "type": "-",
+            "size": 3061,
+            "lmtime": 1543854439147,
+            "modified": false
+          },
+          "classifier": {
+            "200_lenet.ckpt": {
+              "type": "-",
+              "size": 179274,
+              "lmtime": 1543853319044,
+              "modified": false
+            }
+          },
+          "data": {
+            "mnist": {
+              "processed": {
+                "test.pt": {
+                  "type": "-",
+                  "size": 7920435,
+                  "lmtime": 1543852411455,
+                  "modified": false
+                }
+              }
+            }
+          },
+          "logs": {},
+          "utils.py": {
+            "type": "-",
+            "size": 623,
+            "lmtime": 1543841366980,
+            "modified": false
+          },
+          "solver.py": {
+            "type": "-",
+            "size": 20440,
+            "lmtime": 1543861998918,
+            "modified": false
+          },
+          "model": {},
+          "__pycache__": {},
+          "logger.py": {
+            "type": "-",
+            "size": 1782,
+            "lmtime": 1543766415593,
+            "modified": false
+          }
+        }
+      }
+    }
+  },
+  "$version": 1
+}

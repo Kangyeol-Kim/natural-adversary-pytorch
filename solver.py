@@ -1,13 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchvision.utils import save_image
 
 from model import WganG, WganD, Inverter, BottleNeck
+from classifier import LeNet, VGG
+from utils import gen_svd_vec
 from logger import Logger
 
 import time
 import datetime
 import sys
+import os
+from itertools import chain
+import matplotlib.pyplot as plt
+import numpy as np
 
 class Solver():
     def __init__(self, args, train_loader=None, val_loader=None):
@@ -29,22 +36,32 @@ class Solver():
     def build_model(self):
         self.G = WganG(z_dim=self.args.z_dim).to(self.device)
         self.D = WganD().to(self.device)
-        self.Inverter = Inverter().to(self.device)
-        self.g_optim = optim.Adam(self.G.parameters(),
-                                  lr=self.args.g_lr,
-                                  betas=(self.args.beta1, self.args.beta2))
+        self.Inverter = Inverter(z_dim=self.args.z_dim).to(self.device)
+        self.BottleNeck = BottleNeck(in_dim=self.args.t_v*(2*self.args.image_size+1),
+                                     z_dim=self.args.z_dim).to(self.device)
+        if self.args.mode == 'ori_train':
+            self.g_optim = optim.Adam(self.G.parameters(),
+                                    lr=self.args.g_lr,
+                                    betas=(self.args.beta1, self.args.beta2))
+        elif self.args.mode == 'svd_train':
+            self.i_optim = optim.Adam(chain(self.G.parameters(), self.BottleNeck.parameters()),
+                                        lr=self.args.g_lr,
+                                        betas=(self.args.beta1, self.args.beta2))
         self.d_optim = optim.Adam(self.D.parameters(),
                                   lr=self.args.d_lr,
                                   betas=(self.args.beta1, self.args.beta2))
         self.i_optim = optim.Adam(self.Inverter.parameters(),
-                                  lr=self.args.i_lr,
-                                  betas=(self.args.beta1, self.args.beta2))
+                                    lr=self.args.i_lr,
+                                    betas=(self.args.beta1, self.args.beta2))
+
+
         self.MSELoss = nn.MSELoss()
         if self.args.n_gpus > 1:
             print('===> Use multiple gpus : %d' % (self.args.n_gpus))
             self.G = nn.DataParallel(self.G)
             self.D = nn.DataParallel(self.D)
             self.Inverter = nn.DataParallel(self.Inverter)
+            self.BottleNeck = nn.DataParallel(self.BottleNeck)
 
 
     def train(self):    
@@ -58,11 +75,15 @@ class Solver():
         train_iter = iter(self.train_loader)
 
         # MISC
-        iter_per_epoch = len(self.train_loader.dataset) % self.args.batch_size
-        if len(self.train_loader.dataset) // self.args.batch_size != 0:
+        iter_per_epoch = len(self.train_loader.dataset) // self.args.batch_size
+        if len(self.train_loader.dataset) % self.args.batch_size != 0:
             iter_per_epoch += 1
         self.epoch = 0 # NOTE: Temporary fixed
         self.eval_loss = sys.maxsize # NOTE: Temporary fixed
+
+        # Fixed inputs for sampling.
+        self.fixed_noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
+        self.fixed_images = next(iter(self.train_loader))[0].to(self.device)
 
         start_time = time.time()
         # Training Phase
@@ -78,8 +99,12 @@ class Solver():
                 real_images, _ = next(train_iter)
             
             real_images = real_images.to(self.device)
-            noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
-            # noise = real image의 svd vector
+            #NOTE : ADDED
+            if self.args.mode == 'ori_train':
+                noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
+            elif self.args.mode == 'svd_train':
+                noise = gen_svd_vec(x, t=3).to(self.device)
+                noise = self.BottleNeck(noise) # Compress z_dim to 100
 
             # =============== Train D =============== #
             # Compute Critic Loss.
@@ -111,7 +136,10 @@ class Solver():
 
             # Compute losses of each one.
             recon_loss = self.MSELoss(real_images, recon_images)
-            div_loss = self.MSELoss(noise, recon_noise)
+            if self.args.mode == 'ori_train':
+                div_loss = self.MSELoss(noise, recon_noise)
+            elif self.args.mode == 'svd_train':
+                div_loss = self.MSELoss(noise, recon_noise)
             # TODO FIXED
 
             # Inverter Backpropagation
@@ -148,7 +176,7 @@ class Solver():
                          'train_i_div_loss': div_loss.item()}
 
                 for tag, value in info.items():
-                    self.logger.scalar_summary(tag, value, step+1)
+                    self.logger.scalar_summary(tag, value, i+1)
 
             # Validation start ==> 
             if (i + 1) % iter_per_epoch:
@@ -168,11 +196,17 @@ class Solver():
 
 
         # Validation Phase
+        print('##### Validation at {}-epoch starting'.format(self.epoch))
         for i, (real_images, _) in enumerate(self.val_loader):
             
             start_time = time.time()
             real_images = real_images.to(self.device)
-            noise = torch.randn(self.args.batch_size, self.z_dim).to(self.device)
+            if self.args.mode == 'ori_train':
+                noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
+            elif self.args.mode == 'svd_train':
+                noise = gen_svd_vec(x, t=3).to(self.device)
+                noise = self.BottleNeck(noise) # Compress z_dim to 100
+
 
             # =============== Validate D =============== #
             # Compute Critic Loss.
@@ -181,7 +215,7 @@ class Solver():
             d_fake_loss = self.D(fake_images)
 
             # Comput Gradient Penalty
-            eps = torch.rand(real.images.size(0), 1, 1, 1).to(self.device)
+            eps = torch.rand(real_images.size(0), 1, 1, 1).to(self.device)
             xhat = eps*real_images + (1.-eps)*fake_images
             d_gp_loss = self.calc_grad_pn(out=self.D(xhat), x=xhat)
 
@@ -198,7 +232,7 @@ class Solver():
 
             # Compute losses of each one.
             recon_loss = self.MSELoss(real_images, recon_images)
-            div_loss = self.MSELoss(noise, recon_noie)
+            div_loss = self.MSELoss(noise, recon_noise)
 
             # Inverter Backpropagation
             i_loss = recon_loss + div_loss
@@ -229,16 +263,36 @@ class Solver():
                          'val_i_recon_loss': recon_loss.item(),
                          'val_i_div_loss': div_loss.item()}
 
+            # Generate from noise.
+            output = self.G(self.fixed_noise)
+            sample_path = os.path.join(self.args.sample_save_path, '{}_samples.jpg'.format(self.epoch))
+            save_image(output.data.cpu(), sample_path)
+            print('Saved generated images into {}...'.format(sample_path))
+
+            # Reconstruct images.
+            reconst_images = self.G(self.Inverter(self.fixed_images))
+            comparison = torch.zeros((self.fixed_images.size(0) * 2,
+                                      self.fixed_images.size(1),
+                                      self.fixed_images.size(2),
+                                      self.fixed_images.size(3)),
+                                      dtype=torch.float).to(self.device)
+            for k in range(self.fixed_images.size(0)):
+                comparison[2*k] = self.fixed_images[k]
+                comparison[2*k+1] = reconst_images[k]
+
+            sample_path = os.path.join(self.args.sample_save_path, '{}_reconstructions.jpg'.format(self.epoch))
+            save_image(comparison.data.cpu(), sample_path)
 
             # If Average loss is lower than previous epoch, Save Model
-            if (val_d_loss.avg + val_g_loss.avg + val_i_loss.avg) < self.eval_loss:
+            if (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg) < self.eval_loss:
                 print('===> Set of Models is saving at epoch %d!!!' % (self.epoch))
-                self.eval_loss = (val_d_loss.avg + val_g_loss.avg + val_i_loss.avg)
+                self.eval_loss = (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg)
                 ckpt = {
                     'epoch':self.epoch,
                     'D_state_dict':self.D.state_dict(),
                     'G_state_dict':self.G.state_dict(),
                     'I_state_dict':self.Inverter.state_dict(),
+                    'B_state_dict':self.BottleNeck.state_dict(),
                     'd_optim_state_dict':self.d_optim.state_dict(),
                     'g_optim_state_dict':self.g_optim.state_dict(),
                     'i_optim_state_dict':self.i_optim.state_dict()}
@@ -266,22 +320,28 @@ class Solver():
 
 
 class AdversaryGen():
-    def __init__(self, args, train_loader=None):
+    def __init__(self, args, val_loader=None):
         self.args = args
-        self.train_loader = train_loader
+        #NOTE: Generate adversary example with val loader
+        self.val_loader = val_loader
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Build & Load pretrained models: GAN, Classifier
         self.load_pre_model()
-
-        # 
         
     def load_pre_model(self):
+        
+        # Load pretrained models
         self.G = WganG(z_dim=self.args.z_dim).to(self.device)
         self.Inverter = Inverter().to(self.device)
+        self.BottleNeck = BottleNeck(in_dim=self.args.t_v*(2*self.args.image_size+1),
+                                     z_dim=self.args.z_dim).to(self.device)
         ckpt = torch.load(self.args.ckpt_path)
         self.G.load_state_dict(ckpt['G_state_dict'])
         self.Inverter.load_state_dict(ckpt['I_state_dict'])
+        self.BottleNeck.load_state_dict(ckpt['B_state_dict'])
+
+        # Load 
         if self.args.cls_arc == 'lenet':
             self.C = LeNet().to(self.device)
             cls_path = os.path.join(self.args.cls_path)
@@ -295,20 +355,18 @@ class AdversaryGen():
     def to_np(self, x):
         return x.data.cpu().numpy()
     
-    def generate_adversary(self):
-        
+    def generate_adversary(self):    
         # Generate adversary examples.
-        for j, (images, labels) in enumerate(self.test_loader):
+        for j, (images, labels) in enumerate(self.val_loader):
             for i in range(32):
                 x = images[i].unsqueeze(0).to(self.device)
                 y = labels[i].to(self.device)
 
-                adversary, _ = self.iterative_search(self.G, self.I, self.C, x, y,
-                                                  n_samples=self.n_samples, step=self.step)
+                adversary, _ = self.iterative_search(x, y)
                 sample_save_path = os.path.join(self.args.sample_save_path,
                                  '{}_{}_{}.jpg'.format(self.args.cls_arc, j+1, i+1))
                 self.save_adversary(adversary, sample_save_path)
-                print('Saved natural adversary example...'.format(sample_save_path))
+                print('Saved natural adversary example:{}...'.format(sample_save_path))
 
     def save_adversary(self, adversary, filename):
         fig, ax = plt.subplots(1, 2, figsize=(7, 3))
@@ -416,6 +474,12 @@ class AdversaryGen():
                 'n_samples':n_samples}
 
         return adversary, cost
+    
+    def svd_iterative_search(self,):
+        """ Search using svd vector """
+        pass
+
+    
 
 
 
