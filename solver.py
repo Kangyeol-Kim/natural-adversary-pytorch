@@ -4,7 +4,7 @@ import torch.optim as optim
 from torchvision.utils import save_image
 
 from model import WganG, WganD, Inverter, BottleNeck
-from classifier import LeNet, VGG
+from classifier import LeNet, ResNet
 from utils import gen_svd_vec
 from logger import Logger
 
@@ -44,7 +44,7 @@ class Solver():
                                     lr=self.args.g_lr,
                                     betas=(self.args.beta1, self.args.beta2))
         elif self.args.mode == 'svd_train':
-            self.i_optim = optim.Adam(chain(self.G.parameters(), self.BottleNeck.parameters()),
+            self.g_optim = optim.Adam(chain(self.G.parameters(), self.BottleNeck.parameters()),
                                         lr=self.args.g_lr,
                                         betas=(self.args.beta1, self.args.beta2))
         self.d_optim = optim.Adam(self.D.parameters(),
@@ -55,7 +55,6 @@ class Solver():
                                     betas=(self.args.beta1, self.args.beta2))
 
 
-        self.MSELoss = nn.MSELoss()
         if self.args.n_gpus > 1:
             print('===> Use multiple gpus : %d' % (self.args.n_gpus))
             self.G = nn.DataParallel(self.G)
@@ -82,8 +81,13 @@ class Solver():
         self.eval_loss = sys.maxsize # NOTE: Temporary fixed
 
         # Fixed inputs for sampling.
-        self.fixed_noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
-        self.fixed_images = next(iter(self.train_loader))[0].to(self.device)
+        if self.args.mode == 'ori_train':
+            self.fixed_noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
+        elif self.args.mode == 'svd_train':
+            # temp
+            # self.fixed_noise = torch.randn(self.args.batch_size, 171).to(self.device)
+            self.fixed_noise = gen_svd_vec(next(iter(self.val_loader))[0], t=3).to(self.device)
+        self.fixed_images = next(iter(self.val_loader))[0].to(self.device)
 
         start_time = time.time()
         # Training Phase
@@ -98,14 +102,15 @@ class Solver():
                 train_iter = iter(self.train_loader)
                 real_images, _ = next(train_iter)
             
-            real_images = real_images.to(self.device)
+
             #NOTE : ADDED
             if self.args.mode == 'ori_train':
                 noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
             elif self.args.mode == 'svd_train':
-                noise = gen_svd_vec(x, t=3).to(self.device)
+                noise = gen_svd_vec(real_images, t=3).to(self.device)
                 noise = self.BottleNeck(noise) # Compress z_dim to 100
-
+         
+            real_images = real_images.to(self.device)
             # =============== Train D =============== #
             # Compute Critic Loss.
             d_real_loss = self.D(real_images)
@@ -126,7 +131,7 @@ class Solver():
             # =============== Train G =============== #
             g_loss = -torch.mean(self.D(fake_images))
             self.reset_grad()
-            g_loss.backward()
+            g_loss.backward(retain_graph=True)
             self.g_optim.step()
 
             # =============== Train I =============== #
@@ -135,17 +140,19 @@ class Solver():
             recon_noise = self.Inverter(self.G(noise))
 
             # Compute losses of each one.
-            recon_loss = self.MSELoss(real_images, recon_images)
+            recon_loss = torch.mean((real_images-recon_images)**2)
+            
             if self.args.mode == 'ori_train':
-                div_loss = self.MSELoss(noise, recon_noise)
+                div_loss = torch.mean((noise-recon_noise)**2)
             elif self.args.mode == 'svd_train':
-                div_loss = self.MSELoss(noise, recon_noise)
+                div_loss = torch.mean((noise-recon_noise)**2)
             # TODO FIXED
 
             # Inverter Backpropagation
-            i_loss = recon_loss + div_loss
+            i_loss = recon_loss + self.args.lambda_i* div_loss
+            #for k in range(5): # tmp
             self.reset_grad()
-            i_loss.backward()
+            i_loss.backward(retain_graph=True)
             self.i_optim.step()
 
             # =============== Logging =============== #
@@ -179,7 +186,7 @@ class Solver():
                     self.logger.scalar_summary(tag, value, i+1)
 
             # Validation start ==> 
-            if (i + 1) % iter_per_epoch:
+            if (i + 1) % iter_per_epoch == 0:
                 self.epoch += 1
                 self.validate()
 
@@ -196,18 +203,19 @@ class Solver():
 
 
         # Validation Phase
-        print('##### Validation at {}-epoch starting'.format(self.epoch))
-        for i, (real_images, _) in enumerate(self.val_loader):
+        print('##### Validation at [{}] epoch starting'.format(self.epoch))
+        for j, (real_images, _) in enumerate(self.val_loader):
             
             start_time = time.time()
-            real_images = real_images.to(self.device)
+ 
             if self.args.mode == 'ori_train':
                 noise = torch.randn(self.args.batch_size, self.args.z_dim).to(self.device)
             elif self.args.mode == 'svd_train':
-                noise = gen_svd_vec(x, t=3).to(self.device)
+                noise = gen_svd_vec(real_images, t=3).to(self.device)
                 noise = self.BottleNeck(noise) # Compress z_dim to 100
 
-
+            real_images = real_images.to(self.device)
+            
             # =============== Validate D =============== #
             # Compute Critic Loss.
             d_real_loss = self.D(real_images)
@@ -231,11 +239,15 @@ class Solver():
             recon_noise = self.Inverter(self.G(noise))
 
             # Compute losses of each one.
-            recon_loss = self.MSELoss(real_images, recon_images)
-            div_loss = self.MSELoss(noise, recon_noise)
+            recon_loss = torch.mean((real_images-recon_images)**2)
+            
+            if self.args.mode == 'ori_train':
+                div_loss = torch.mean((noise-recon_noise)**2)
+            elif self.args.mode == 'svd_train':
+                div_loss = torch.mean((noise-recon_noise)**2)
 
             # Inverter Backpropagation
-            i_loss = recon_loss + div_loss
+            i_loss = recon_loss + self.args.lambda_i * div_loss
             
             # =============== Logging =============== #
             # Update Loss Objects
@@ -243,10 +255,10 @@ class Solver():
             self.val_g_loss.update(g_loss.item())
             self.val_i_loss.update(i_loss.item())
 
-            if (i + 1) % self.args.log_step == 0:
+            if (j + 1) % self.args.log_step == 0:
                 elapsed = time.time() - start_time
                 elapsed = str(datetime.timedelta(seconds=elapsed))
-                print('##### Validation {0}'
+                print('##### Validation {0}\t'
                       'Elapsed : {1}\t'
                       'D_loss : {d_loss.val:.4f}({d_loss.avg:.4f})\t'
                       'G_loss : {g_loss.val:.4f}({g_loss.avg:.4f})\t'
@@ -263,31 +275,35 @@ class Solver():
                          'val_i_recon_loss': recon_loss.item(),
                          'val_i_div_loss': div_loss.item()}
 
-            # Generate from noise.
+        # Generate from noise.
+        if self.args.mode == 'ori_train':
             output = self.G(self.fixed_noise)
-            sample_path = os.path.join(self.args.sample_save_path, '{}_samples.jpg'.format(self.epoch))
-            save_image(output.data.cpu(), sample_path)
-            print('Saved generated images into {}...'.format(sample_path))
+        elif self.args.mode == 'svd_train':
+            self.fixed_noise_out = self.BottleNeck(self.fixed_noise)
+            output = self.G(self.fixed_noise_out)
+        sample_path = os.path.join(self.args.sample_save_path, '{}_samples.jpg'.format(self.epoch))
+        save_image(output.data.cpu(), sample_path)
+        print('Saved generated images into {}...'.format(sample_path))
 
-            # Reconstruct images.
-            reconst_images = self.G(self.Inverter(self.fixed_images))
-            comparison = torch.zeros((self.fixed_images.size(0) * 2,
-                                      self.fixed_images.size(1),
-                                      self.fixed_images.size(2),
-                                      self.fixed_images.size(3)),
-                                      dtype=torch.float).to(self.device)
-            for k in range(self.fixed_images.size(0)):
-                comparison[2*k] = self.fixed_images[k]
-                comparison[2*k+1] = reconst_images[k]
+        # Reconstruct images.
+        reconst_images = self.G(self.Inverter(self.fixed_images))
+        comparison = torch.zeros((self.fixed_images.size(0) * 2,
+                                  self.fixed_images.size(1),
+                                  self.fixed_images.size(2),
+                                  self.fixed_images.size(3)),
+                                  dtype=torch.float).to(self.device)
+        for k in range(self.fixed_images.size(0)):
+            comparison[2*k] = self.fixed_images[k]
+            comparison[2*k+1] = reconst_images[k]
+        
+        sample_path = os.path.join(self.args.sample_save_path, '{}_reconstructions.jpg'.format(self.epoch))
+        save_image(comparison.data.cpu(), sample_path)
 
-            sample_path = os.path.join(self.args.sample_save_path, '{}_reconstructions.jpg'.format(self.epoch))
-            save_image(comparison.data.cpu(), sample_path)
-
-            # If Average loss is lower than previous epoch, Save Model
-            if (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg) < self.eval_loss:
-                print('===> Set of Models is saving at epoch %d!!!' % (self.epoch))
-                self.eval_loss = (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg)
-                ckpt = {
+        # If Average loss is lower than previous epoch, Save Model
+        if (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg) < self.eval_loss:
+            print('===> Set of Models is saving at epoch %d!!!' % (self.epoch))
+            self.eval_loss = (self.val_d_loss.avg + self.val_g_loss.avg + self.val_i_loss.avg)
+            ckpt = {
                     'epoch':self.epoch,
                     'D_state_dict':self.D.state_dict(),
                     'G_state_dict':self.G.state_dict(),
@@ -296,7 +312,7 @@ class Solver():
                     'd_optim_state_dict':self.d_optim.state_dict(),
                     'g_optim_state_dict':self.g_optim.state_dict(),
                     'i_optim_state_dict':self.i_optim.state_dict()}
-                torch.save(ckpt, os.path.join(self.args.model_save_path, 'ckpt_%d' % (self.epoch)))
+            torch.save(ckpt, os.path.join(self.args.model_save_path, 'ckpt_%d.pth' % (self.epoch)))
 
 
     def calc_grad_pn(self, out, x):
@@ -331,19 +347,23 @@ class AdversaryGen():
         
     def load_pre_model(self):
         
-        # Load pretrained models
+        # Model config
         self.G = WganG(z_dim=self.args.z_dim).to(self.device)
         self.Inverter = Inverter().to(self.device)
         self.BottleNeck = BottleNeck(in_dim=self.args.t_v*(2*self.args.image_size+1),
                                      z_dim=self.args.z_dim).to(self.device)
         ckpt = torch.load(self.args.ckpt_path)
+
+        # Load pretrained models
         self.G.load_state_dict(ckpt['G_state_dict'])
         self.Inverter.load_state_dict(ckpt['I_state_dict'])
         self.BottleNeck.load_state_dict(ckpt['B_state_dict'])
-
-        # Load 
         if self.args.cls_arc == 'lenet':
             self.C = LeNet().to(self.device)
+            cls_path = os.path.join(self.args.cls_path)
+            self.C.load_state_dict(torch.load(cls_path, map_location=lambda storage, loc: storage))
+        elif self.args.cls_arc == 'resnet18':
+            self.C = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=self.args.num_classes).to(self.device)
             cls_path = os.path.join(self.args.cls_path)
             self.C.load_state_dict(torch.load(cls_path, map_location=lambda storage, loc: storage))
 
@@ -362,7 +382,7 @@ class AdversaryGen():
                 x = images[i].unsqueeze(0).to(self.device)
                 y = labels[i].to(self.device)
 
-                adversary, _ = self.iterative_search(x, y)
+                adversary, cost = self.iterative_search(x, y)
                 sample_save_path = os.path.join(self.args.sample_save_path,
                                  '{}_{}_{}.jpg'.format(self.args.cls_arc, j+1, i+1))
                 self.save_adversary(adversary, sample_save_path)
@@ -470,13 +490,15 @@ class AdversaryGen():
 
         # POINT : COMPUTATION COST CAN BE DECREASED IF WE USE THE INFORMATION OF IMAGE
         # Output : Perturbation magnitude, n_sample 
-        cost = {'ptb':np.linalg.norm(d_adv, norm=2),
-                'n_samples':n_samples}
+        cost = {'ptb': np.linalg.norm(d_adv, norm=2),
+                'n_samples': n_samples}
 
         return adversary, cost
     
-    def svd_iterative_search(self,):
-        """ Search using svd vector """
+    def svd_iterative_search(self):
+        """ Search using svd vector 
+        0.1 -> 0.2
+        """
         pass
 
     

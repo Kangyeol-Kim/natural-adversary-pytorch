@@ -24,14 +24,16 @@ def main(args):
                                   download=True,
                                   transform=transform), 
                                   batch_size=args.batch_size, 
-                                  shuffle=True)
+                                  shuffle=True,
+                                  drop_last=True)
         
         val_loader = DataLoader(datasets.MNIST('./data', 
                                 train=False, 
                                 download=True,
                                 transform=transform), 
                                 batch_size=args.batch_size, 
-                                shuffle=True)
+                                shuffle=True,
+                                drop_last=True)
     elif args.data == 'lsun':
         pass
 
@@ -75,10 +77,11 @@ if __name__ == '__main__':
     parser.add_argument('--i_lr', type=float, default=1e-4)
     parser.add_argument('--beta1', type=float, default=0.5)
     parser.add_argument('--beta2', type=float, default=0.99)
+    parser.add_argument('--lambda_i', type=float, default=0.1)
 
     # Getting Adversary Examples Configuration
     parser.add_argument('--ckpt_path', type=str, default=None, help='Path for loading pretrained checkpoint')
-    parser.add_argument('--cls_arc', type=str, default='lenet', choices=['lenet','vggnet'], help='Kind of classifier to deceive')
+    parser.add_argument('--cls_arc', type=str, default='lenet', choices=['lenet','resnet'], help='Kind of classifier to deceive')
     parser.add_argument('--cls_path', type=str, default=None, help='Path for loading pretrained Classifier')
     parser.add_argument('--delta_r', type=float, default=0.01, help='Increment of search range')
     parser.add_argument('--search', type=str, default='iterative', choices=['iterative', 'recursive'])

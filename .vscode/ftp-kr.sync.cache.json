@@ -81,30 +81,33 @@
         },
         "natural_adv_gen": {
           "sample": {},
+          "botch_model": {},
           "README.md": {
             "type": "-",
-            "size": 773,
-            "lmtime": 1540905971694,
+            "size": 922,
+            "lmtime": 1544014853794,
             "modified": false
           },
+          "fixsvd3_model": {},
           "main.py": {
             "type": "-",
-            "size": 4184,
-            "lmtime": 1543854145409,
-            "modified": false
+            "size": 4346,
+            "lmtime": 1543934631162,
+            "modified": true
           },
           "classifier.py": {
             "type": "-",
-            "size": 4818,
-            "lmtime": 1543853641215,
+            "size": 11038,
+            "lmtime": 1544028648583,
             "modified": false
           },
           "model.py": {
             "type": "-",
-            "size": 3061,
-            "lmtime": 1543854439147,
+            "size": 3492,
+            "lmtime": 1544027250312,
             "modified": false
           },
+          "fixsvd3_sample": {},
           "classifier": {
             "200_lenet.ckpt": {
               "type": "-",
@@ -113,6 +116,7 @@
               "modified": false
             }
           },
+          "Backup": {},
           "data": {
             "mnist": {
               "processed": {
@@ -126,19 +130,26 @@
             }
           },
           "logs": {},
+          "botch_sample": {},
           "utils.py": {
             "type": "-",
-            "size": 623,
-            "lmtime": 1543841366980,
+            "size": 614,
+            "lmtime": 1544015770328,
             "modified": false
           },
           "solver.py": {
             "type": "-",
-            "size": 20440,
-            "lmtime": 1543861998918,
+            "size": 21503,
+            "lmtime": 1544018205107,
             "modified": false
           },
           "model": {},
+          "ori_64_50000.log": {
+            "type": "-",
+            "size": 1448753,
+            "lmtime": 0,
+            "modified": true
+          },
           "__pycache__": {},
           "logger.py": {
             "type": "-",

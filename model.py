@@ -14,14 +14,14 @@ class WganG(nn.Module):
             nn.ReLU())
         
         self.deconv_1 = nn.Sequential(
-            nn.ConvTranspose2d(self.ngf * 4, self.ngf * 2, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(self.ngf * 4, self.ngf * 2, 3, 2, 1, bias=False),
             nn.ReLU())
         
         self.deconv_2 = nn.Sequential(
-            nn.ConvTranspose2d(self.ngf * 2, self.ngf * 1, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(self.ngf * 2, self.ngf * 1, 3, 2, 1, bias=False),
             nn.ReLU(),
 
-            nn.ConvTranspose2d(self.ngf * 1, 1, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(self.ngf * 1, 1, 4, 2, 0, bias=False),
             nn.Sigmoid())
 
     def forward(self, z):
@@ -29,8 +29,6 @@ class WganG(nn.Module):
         out = out.view(out.size(0), self.ngf*4, 4, 4) # 4x4
 
         out = self.deconv_1(out) # 8x8
-        out = out[:, :, :7, :7] # 7x7
-
         out = self.deconv_2(out) # 28 x 28
 
         return out
@@ -55,7 +53,6 @@ class WganD(nn.Module):
 
         self.linear = nn.Sequential(
             nn.Linear(self.ngf * 64, 1),
-            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -83,8 +80,9 @@ class Inverter(nn.Module):
         )
 
         self.linear = nn.Sequential(
-            nn.Linear(self.ngf * 64, self.z_dim),
-            nn.Sigmoid()
+            nn.Linear(self.ngf * 64, 512),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(512, z_dim)
         )
 
     def forward(self, x):
@@ -95,18 +93,34 @@ class Inverter(nn.Module):
 
 
 class BottleNeck(nn.Module):
-    """ Bottleneck Layer for resize SVD vector """
+    """ Bottleneck Layer for resize SVD vector 
+
+    x -       [z_dim]         -
+      - [2*in_dim] - [z_dim]  - ==> Normalize
+    """
     def __init__(self, in_dim, z_dim=64):
         super(BottleNeck, self).__init__()
-        self.layer = nn.Sequential(
-            nn.Linear(in_dim, z_dim),
-            nn.Tanh()) # scaling range [-1, 1]
+        self.out_layer = nn.Sequential(
+            nn.Linear(in_dim, 2*in_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(2*in_dim, z_dim))
+        
+        self.residual_layer = nn.Sequential(
+            nn.Linear(in_dim, z_dim))
+
     
     def forward(self, x):
-        return self.layer(x)
+        residual = self.residual_layer(x)
+        out = self.out_layer(x)
+        out += residual
+
+        out_norm = torch.norm(out, p=2, dim=0)
+        out = out.div(out_norm.expand_as(out))
+
+        return out
 
 if __name__ == '__main__':
      G = WganG()
-
-
+     z =  torch.randn(8, 100)
+     print(G(z).size())
 

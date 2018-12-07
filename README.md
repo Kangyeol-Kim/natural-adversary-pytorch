@@ -10,4 +10,10 @@ This repository provides the code for the paper "[Generating Natural Adversarial
 ## TODO
 - [ ] Convert the code that is provided by paper's author into pytorch version
 - [ ] Investigate the statistical properties of natural image.
- 
+
+
+## Reference
+I refered below pages for coding
+
+* https://github.com/zhengliz/natural-adversary
+* https://github.com/hjbahng/natural-adversary-pytorch

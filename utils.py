@@ -12,10 +12,10 @@ def gen_svd_vec(x, t=3):
     svd_vector = torch.zeros((batch_size, t*(2*img_size+1)))
     for i, img in enumerate(x):
         u,s,v = svd(img)
-        t_u,t_s,t_v = u[:,:t].reshape(-1), \
-                    v[:, :t].reshape(-1), \
-                    torch.diagonal(s, 0)[:t]
-        svd_vector[i] = torch.cat([t_u,t_s,t_v])
+        t_u,t_v,t_s = u[:,:t].reshape(-1), \
+                      v.t()[:, :t].reshape(-1), \
+                      s[:t]
+        svd_vector[i] = torch.cat([t_u, t_s, t_v])
     return svd_vector
 
 
